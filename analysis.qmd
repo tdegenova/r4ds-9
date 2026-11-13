@@ -13,3 +13,95 @@ library(purrr)
 library(leaflet)
 library(jsonlite)
 ```
+
+```{r}
+#| cache: true
+raw <- jsonlite::fromJSON("data/wildfires.geojson", simplifyVector = FALSE)
+length(raw$features)
+
+fire <- raw$features[[1]]
+names(fire)
+
+first_coordinate <- unlist(fire$geometry$coordinates[[1]][[1]])
+first_coordinate
+
+wildfires <- tibble(features = raw$features) |>
+  unnest_wider(features) |>
+  unnest_wider(properties)
+
+fires <- wildfires |>
+  unnest_wider(geometry, names_sep = "_") |>
+  select(incident, gis_acres, fire_year, agency, state, geometry_coordinates) |>
+  mutate(
+    gis_acres = as.numeric(gis_acres),
+    fire_year = as.integer(fire_year)
+  )
+
+```
+
+```{r}
+fires |>
+  filter(str_detect(incident, "\\bAugust\\b")) |>
+  nrow()
+
+fires |>
+  slice_max(gis_acres, n = 10, with_ties = FALSE)
+```
+
+```{r}
+big_fires <- fires |>
+  filter(gis_acres >= 100000) |>
+  mutate(
+    lon = map_dbl(
+      geometry_coordinates,
+      \(rings) mean(map_dbl(rings[[1]], \(coordinate) coordinate[[1]]))
+    ),
+    lat = map_dbl(
+      geometry_coordinates,
+      \(rings) mean(map_dbl(rings[[1]], \(coordinate) coordinate[[2]]))
+    )
+  )
+```
+
+```{r}
+largest_fires <- big_fires |>
+  slice_max(gis_acres, n = 10, with_ties = FALSE) |>
+  mutate(
+    polygon_lng = map(
+      geometry_coordinates,
+      \(rings) map_dbl(rings[[1]], \(coordinate) coordinate[[1]])
+    ),
+    polygon_lat = map(
+      geometry_coordinates,
+      \(rings) map_dbl(rings[[1]], \(coordinate) coordinate[[2]])
+    )
+  )
+
+fire_map <- leaflet() |>
+  addProviderTiles(providers$CartoDB.Positron)
+
+fire_map <- reduce(
+  seq_len(nrow(largest_fires)),
+  \(map, i) addPolygons(
+    map,
+    lng = largest_fires$polygon_lng[[i]],
+    lat = largest_fires$polygon_lat[[i]],
+    popup = paste0(
+      largest_fires$incident[[i]], " (",
+      largest_fires$fire_year[[i]], ") - ",
+      scales::comma(largest_fires$gis_acres[[i]]), " acres"
+    ),
+    weight = 1,
+    fillOpacity = 0.5
+  ),
+  .init = fire_map
+)
+
+fire_map |>
+  fitBounds(
+    lng1 = min(unlist(largest_fires$polygon_lng)),
+    lat1 = min(unlist(largest_fires$polygon_lat)),
+    lng2 = max(unlist(largest_fires$polygon_lng)),
+    lat2 = max(unlist(largest_fires$polygon_lat))
+  )
+```
