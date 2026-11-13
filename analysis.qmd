@@ -1,0 +1,15 @@
+---
+title: "Wildfires"
+author: "tdegenova"
+format: html
+execute:
+  echo: false
+---
+
+```{r}
+#| message: false
+library(tidyverse)
+library(purrr)
+library(leaflet)
+library(jsonlite)
+```
